@@ -1,0 +1,13 @@
+streamlit
+pandas
+numpy
+matplotlib
+scikit-learn
+openpyxl
+requests
+beautifulsoup4
+lxml
+wordcloud
+Pillow
+selenium
+chromedriver_autoinstaller

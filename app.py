@@ -184,7 +184,7 @@ def page_overview(df_shop, df_words, df_ml, n_words_raw,
         2. **정보 부족** – 어떤 식품이 가장 가성비가 좋은지 비교하기 어렵습니다.
 
         이 프로젝트는 **크롤링 → 데이터 정제 → 머신러닝 → 시각화**의 전 과정을 자동화하여,
-        사용자가 자신의 신체 조건과 예산에 맞는 최적의 단백질 식단을 즉시 확인할 수 있도록 합니다.
+        사용자가 자신의 신체 조건과 예산에 맞는 비용 효율적인 단백질 구매 조합을 즉시 확인할 수 있도록 합니다.
         """)
     with col_r:
         st.metric("수집된 상품 수", f"{len(df_shop)}개")
@@ -228,25 +228,40 @@ for t in titles:
     if a_tag:
         keywords.append(a_tag.get_text().strip())
         """, language="python")
-        st.info("💡 **데이터 정제**: 페이지네이션 중복 수집 방지(seen 집합), '마프→마이프로틴' 등 "
+        st.info("💡 **데이터 정제**: 원본 커뮤니티 제목을 수집한 뒤 중복·광고성 문구를 제거하고, "
+                "단백질 관련 타겟 키워드가 포함된 제목을 중심으로 빈도 분석합니다. "
+                "페이지네이션 중복 수집 방지(seen 집합), '마프→마이프로틴' 등 "
                 "동의어 처리, **부정적 맥락('최악', '환불' 등)** 게시글은 텍스트 마이닝에서 별도 처리합니다.")
 
     with tab2:
         st.markdown("**대상:** 네이버 쇼핑 — 단백질·탄수화물·지방 카테고리별 최저가 수집")
-        st.caption(f"🕐 쇼핑 데이터 수집 시각: **{shop_collected_at}** *(정적 데이터로, 실시간 최저가와 다를 수 있습니다)*")
-        # 수업(Ch.13)에서 배운 Selenium + 스크롤 + find_elements 패턴
+        st.caption(f"🕐 쇼핑 데이터 수집/작성 시각: **{shop_collected_at}** *(백업 데이터의 경우 데이터 작성 시각이며, 실시간 최저가와 다를 수 있습니다)*")
+        # 수업(Ch.13)에서 배운 Selenium + 스크롤 + find_elements + 다단계 fallback 패턴
         st.code("""
 driver.get(url)
-driver.implicitly_wait(10)                          # 로딩 대기 (Ch.13)
-driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")  # 스크롤
-time.sleep(3)
-items = driver.find_elements(By.CSS_SELECTOR, '[class^="product_item__"]')
+driver.implicitly_wait(10)                         # 로딩 대기 (Ch.13)
+driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+time.sleep(2)
 
-for item in items[:15]:
-    title = item.find_element(...).text
-    if is_ad_product(title):
-        continue                                    # 광고 상품 제외
-    weight_g = extract_total_weight_g(title)        # 사은품/증정 표기 무시
+# [1단계] CSS selector 다단계 시도 (UI 업데이트 대비)
+for sel in ['[class^="product_item__"]', '[class*="product_card"]', ...]:
+    items = driver.find_elements(By.CSS_SELECTOR, sel)
+    if items: break
+
+# [2단계] 카드 못 찾으면 data-shp-contents-dtl 속성 a태그 fallback
+if not items:
+    items = driver.find_elements(By.CSS_SELECTOR, 'a[data-shp-contents-dtl]')
+
+# [3단계] 여전히 없으면 쇼핑 홈 검색창 입력 방식으로 재시도
+
+for item in items[:20]:
+    title = _try_find_text(item, TITLE_SELECTORS)   # selector 다단계 시도
+    if not title or not price:                       # item.text 최종 fallback
+        title, price = _extract_from_raw_text(item.text)
+    if is_ad_product(title): continue               # 광고 상품 제외
+    weight_g = extract_total_weight_g(title)         # 사은품/증정 표기 무시
+
+# 크롤링 실패 시 사전 정제된 백업 데이터로 자동 전환 (Fail-safe)
         """, language="python")
         if "수집방식" in df_shop.columns:
             modes = set(df_shop["수집방식"].dropna().unique())
@@ -262,7 +277,7 @@ for item in items[:15]:
         st.warning(f"⚠️ **Fail-safe 시스템:** 안티봇 차단 시 사전 정제된 백업 데이터로 자동 전환됩니다. {_mode_msg}")
 
     with tab3:
-        st.markdown("**스포츠 영양학 논문** 기반 시뮬레이션 데이터 (체중 1kg당 단백질 1.2~2.0g)")
+        st.markdown("스포츠 영양학 **권장 범위를 참고한** 시뮬레이션 데이터 (체중 1kg당 단백질 1.2~2.0g 섭취 범위 가정)")
         st.warning("""
         **⚠️ 시뮬레이션 데이터 한계 명시**
         - 이 데이터는 실측 임상 데이터가 아닌 **영양학 공식으로 역산된 가상 데이터**입니다.
@@ -622,6 +637,8 @@ def page_predict(df_shop, model, ml_metrics, X_full, budget, shop_collected_at="
     st.caption(f"배송비 약 {SHIPPING_COST:,}원 포함 (단순 추정값) / 2kg 초과 대용량 단백질·탄수화물 상품 자동 제외 (냉동 보관 제약)")
     st.warning("⚠️ **단위 주의:** 예산은 **1회 구매 기준**, 단백질·탄수화물·지방 목표는 **하루 섭취 기준**입니다. "
                "구매한 상품 패키지는 여러 날에 걸쳐 나눠 먹게 되며, 아래 영양소 합계는 구매 패키지 전체 기준입니다.")
+    st.caption("ℹ️ **참고:** 본 추천 조합은 건강성 평가가 아닌 가격·영양소 기준의 비용 효율 비교입니다. "
+               "나트륨, 당류, 포화지방, 식품 가공도는 반영하지 않았습니다.")
 
     # ── session_state 캐시 키 (데이터 버전 포함하여 CSV 교체 시 자동 무효화) ──
     opt_key = (budget, goal, round(my_weight), my_days, my_hours, shop_collected_at)
@@ -823,7 +840,7 @@ def page_textmining(df_words, words_collected_at, df_shop, ml_metrics):
     all_targets = (
         sum(category_dict.values(), [])
         + list(synonyms.keys())
-        + ["스팀", "소시지", "생닭", "스테이크", "오트밀", "쉐이크", "닭가슴살", "단백질",
+        + ["스팀", "소시지", "생닭", "스테이크", "햇반", "식빵", "쉐이크", "닭가슴살", "단백질",
            "프로틴", "보충제", "WPC", "WPI", "단백질쉐이크", "프로틴바",
            "닭가슴살소시지", "냉동닭가슴살"]
     )
@@ -952,12 +969,13 @@ def page_textmining(df_words, words_collected_at, df_shop, ml_metrics):
         - 2차 다항 Ridge 회귀로 비선형성을 부분 포착했으나, 실제 개인 임상 데이터에는 더 복잡한 모델이 필요합니다.
         - RMSE/MAE로 실제 예측 오차 범위를 명시했습니다.
 
-        **2. 식단 최적화 한계**
+        **2. 구매 조합 탐색 한계**
         - 각 식품의 단백질·탄수화물·지방 교차 기여량을 모두 반영했습니다.
         - 배송비(약 9,000원)를 예산에 포함했습니다.
         - 2kg 초과 대용량 상품은 보관 제약으로 기본 제외됩니다.
         - 식단 단조로움 방지를 위해 단일 상품 5개 이상 구매 시 경고를 표시합니다.
-        - 실제 최적화 문제는 선형 계획법(LP)으로 더 정교하게 풀 수 있습니다.
+        - 나트륨·당류·포화지방·식품 가공도는 반영하지 않으며, 건강성 평가가 아닌 비용 효율 비교입니다.
+        - 실제 탐색 문제는 선형 계획법(LP)으로 더 정교하게 풀 수 있습니다.
 
         **3. 크롤링 한계**
         - CSS 선택자는 플랫폼 UI 업데이트 시 깨질 수 있습니다.

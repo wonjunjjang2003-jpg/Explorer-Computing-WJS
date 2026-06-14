@@ -362,11 +362,14 @@ def page_ranking(df_shop, shop_collected_at):
 
     with col_chart1:
         st.markdown("**① 식품 100g당 가격 비교 (용량 기준)**")
-        fig1, ax1 = plt.subplots(figsize=(6, 4))
+        n_items = len(df_shop)
+        fig_h = max(5, n_items * 0.45)
+        fig1, ax1 = plt.subplots(figsize=(6, fig_h))
         for cat, grp in df_shop.groupby("카테고리"):
             ax1.barh(grp["상품명"].str[:15], grp["100g당 가격(원)"],
                      color=COLORS.get(cat, '#ccc'), label=cat, height=0.6)
         ax1.set_xlabel("식품 100g당 가격 (원)")
+        ax1.tick_params(axis='y', labelsize=8)
         ax1.legend()
         ax1.invert_yaxis()
         plt.tight_layout()
@@ -376,11 +379,12 @@ def page_ranking(df_shop, shop_collected_at):
 
     with col_chart2:
         st.markdown("**② 핵심영양소 1g당 가격 비교 (영양 효율 기준)**")
-        fig2, ax2 = plt.subplots(figsize=(6, 4))
+        fig2, ax2 = plt.subplots(figsize=(6, fig_h))
         for cat, grp in df_shop.groupby("카테고리"):
             ax2.barh(grp["상품명"].str[:15], grp["핵심영양소 1g당 가격(원/g)"],
                      color=COLORS.get(cat, '#ccc'), label=cat, height=0.6)
         ax2.set_xlabel("핵심영양소 1g당 가격 (원/g)")
+        ax2.tick_params(axis='y', labelsize=8)
         ax2.legend()
         ax2.invert_yaxis()
         plt.tight_layout()
